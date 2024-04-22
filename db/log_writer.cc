@@ -57,12 +57,14 @@ Status Writer::AddRecord(const Slice& slice) {
     assert(kBlockSize - block_offset_ - kHeaderSize >= 0);
 
     const size_t avail = kBlockSize - block_offset_ - kHeaderSize;
+    // [maxshuang] split the data regardless of the data boundary
+    // a bit like network protocol
     const size_t fragment_length = (left < avail) ? left : avail;
 
     RecordType type;
     const bool end = (left == fragment_length);
     if (begin && end) {
-      type = kFullType;
+      type = kFullType;  // batch 一次写完，< 32kB
     } else if (begin) {
       type = kFirstType;
     } else if (end) {

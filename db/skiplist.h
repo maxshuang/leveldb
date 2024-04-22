@@ -139,6 +139,7 @@ class SkipList {
   Random rnd_;
 };
 
+// [maxshuang] wait to achieve lock-free skiplist?
 // Implementation details follow
 template <typename Key, class Comparator>
 struct SkipList<Key, Comparator>::Node {
@@ -161,6 +162,7 @@ struct SkipList<Key, Comparator>::Node {
     next_[n].store(x, std::memory_order_release);
   }
 
+  // [maxshuang]???
   // No-barrier variants that can be safely used in a few locations.
   Node* NoBarrier_Next(int n) {
     assert(n >= 0);
@@ -173,6 +175,7 @@ struct SkipList<Key, Comparator>::Node {
 
  private:
   // Array of length equal to the node height.  next_[0] is lowest level link.
+  // [maxshuang] interesting usage of array, like next_[0]
   std::atomic<Node*> next_[1];
 };
 
@@ -255,6 +258,7 @@ bool SkipList<Key, Comparator>::KeyIsAfterNode(const Key& key, Node* n) const {
   return (n != nullptr) && (compare_(n->key, key) < 0);
 }
 
+// [maxshuang] find the lower_bound, but prev is the nodes before lower_bound node
 template <typename Key, class Comparator>
 typename SkipList<Key, Comparator>::Node*
 SkipList<Key, Comparator>::FindGreaterOrEqual(const Key& key,
@@ -278,6 +282,7 @@ SkipList<Key, Comparator>::FindGreaterOrEqual(const Key& key,
   }
 }
 
+// [maxshuang] find the node before lower_bound node  
 template <typename Key, class Comparator>
 typename SkipList<Key, Comparator>::Node*
 SkipList<Key, Comparator>::FindLessThan(const Key& key) const {
@@ -360,6 +365,7 @@ void SkipList<Key, Comparator>::Insert(const Key& key) {
   for (int i = 0; i < height; i++) {
     // NoBarrier_SetNext() suffices since we will add a barrier when
     // we publish a pointer to "x" in prev[i].
+    // [maxshuang] This operation is loose，so we don't need strong synchorinzation here, interesting
     x->NoBarrier_SetNext(i, prev[i]->NoBarrier_Next(i));
     prev[i]->SetNext(i, x);
   }

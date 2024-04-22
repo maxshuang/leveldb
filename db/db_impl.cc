@@ -48,7 +48,7 @@ struct DBImpl::Writer {
   WriteBatch* batch;
   bool sync;
   bool done;
-  port::CondVar cv;
+  port::CondVar cv;   // wait for the head of batch writer
 };
 
 struct DBImpl::CompactionState {
@@ -502,6 +502,8 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   return status;
 }
 
+// [maxshuang]: edit is the log entry of manifest file
+// why it doesn't use dir to represent the level?
 Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
                                 Version* base) {
   mutex_.AssertHeld();
@@ -533,6 +535,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
     const Slice min_user_key = meta.smallest.user_key();
     const Slice max_user_key = meta.largest.user_key();
     if (base != nullptr) {
+      // [maxshuang] optimization，put to next level if it doesn't overlap with current layer
       level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
     }
     edit->AddFile(level, meta.number, meta.file_size, meta.smallest,
@@ -731,6 +734,7 @@ void DBImpl::BackgroundCompaction() {
     // Nothing to do
   } else if (!is_manual && c->IsTrivialMove()) {
     // Move file to next level
+    // [maxshuang] move directly
     assert(c->num_input_files(0) == 1);
     FileMetaData* f = c->input(0, 0);
     c->edit()->RemoveFile(c->level(), f->number);
@@ -746,6 +750,7 @@ void DBImpl::BackgroundCompaction() {
         static_cast<unsigned long long>(f->file_size),
         status.ToString().c_str(), versions_->LevelSummary(&tmp));
   } else {
+    // [maxshuang] start compaction
     CompactionState* compact = new CompactionState(c);
     status = DoCompactionWork(compact);
     if (!status.ok()) {
@@ -1115,6 +1120,7 @@ int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
 Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
   Status s;
+  // [maxshuang] read has a lock?? trivial operation
   MutexLock l(&mutex_);
   SequenceNumber snapshot;
   if (options.snapshot != nullptr) {
@@ -1206,18 +1212,22 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   MutexLock l(&mutex_);
   writers_.push_back(&w);
   while (!w.done && &w != writers_.front()) {
-    w.cv.Wait();
+    w.cv.Wait();  // non-head writer will release the lock
   }
   if (w.done) {
     return w.status;
   }
 
+  // head write does all these with lock
   // May temporarily unlock and wait.
   Status status = MakeRoomForWrite(updates == nullptr);
   uint64_t last_sequence = versions_->LastSequence();
   Writer* last_writer = &w;
   if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
     WriteBatch* write_batch = BuildBatchGroup(&last_writer);
+    // [maxshuang] all records in a batch use the same sequence ??
+    // kernel append is an atomic operation even for large batch??
+    // empirical exprience says that 4K is limited for atomic append
     WriteBatchInternal::SetSequence(write_batch, last_sequence + 1);
     last_sequence += WriteBatchInternal::Count(write_batch);
 
@@ -1254,6 +1264,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   while (true) {
     Writer* ready = writers_.front();
     writers_.pop_front();
+    // batch write successes
     if (ready != &w) {
       ready->status = status;
       ready->done = true;
@@ -1317,6 +1328,8 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
     }
     *last_writer = w;
   }
+
+  // append all logs to a tmp WriteBatch or the first large batch
   return result;
 }
 
@@ -1346,7 +1359,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       mutex_.Lock();
     } else if (!force &&
                (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
-      // There is room in current memtable
+      // There is room in current memtable, normally 4MB
       break;
     } else if (imm_ != nullptr) {
       // We have filled up the current memtable, but the previous
@@ -1359,6 +1372,8 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       background_work_finished_signal_.Wait();
     } else {
       // Attempt to switch to a new memtable and trigger compaction of old
+      // [maxshuang] create and write to a new log file before serializing the immutable memtable
+      // it can delete the old log file after producing a level-0 sst 
       assert(versions_->PrevLogNumber() == 0);
       uint64_t new_log_number = versions_->NewFileNumber();
       WritableFile* lfile = nullptr;

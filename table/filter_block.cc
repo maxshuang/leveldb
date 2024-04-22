@@ -18,6 +18,9 @@ static const size_t kFilterBase = 1 << kFilterBaseLg;
 FilterBlockBuilder::FilterBlockBuilder(const FilterPolicy* policy)
     : policy_(policy) {}
 
+// [maxshuang] fix size per Filter data or fix range per Filter data?
+// seem that it will enter twice?
+// 看起来并没有按 key range 划分，而是按数据大小划分了??
 void FilterBlockBuilder::StartBlock(uint64_t block_offset) {
   uint64_t filter_index = (block_offset / kFilterBase);
   assert(filter_index >= filter_offsets_.size());
@@ -52,6 +55,7 @@ void FilterBlockBuilder::GenerateFilter() {
   const size_t num_keys = start_.size();
   if (num_keys == 0) {
     // Fast path if there are no keys for this filter
+    // [maxshuang] result is the filter
     filter_offsets_.push_back(result_.size());
     return;
   }

@@ -23,6 +23,7 @@
 
 namespace leveldb {
 
+// [maxshuang] every batch has a header + operation[N]
 // WriteBatch header has an 8-byte sequence number followed by a 4-byte count.
 static const size_t kHeader = 12;
 
@@ -39,7 +40,10 @@ void WriteBatch::Clear() {
 
 size_t WriteBatch::ApproximateSize() const { return rep_.size(); }
 
+// 操作分离，不暴露内部实现，传入 handler，有点类似函数编程了
+// 和 C++ 的 iterator + algorithm 模式 还有点一样
 Status WriteBatch::Iterate(Handler* handler) const {
+  // Slice 这种 string_view 对减少内存拷贝有奇效
   Slice input(rep_);
   if (input.size() < kHeader) {
     return Status::Corruption("malformed WriteBatch (too small)");
@@ -80,6 +84,7 @@ Status WriteBatch::Iterate(Handler* handler) const {
 }
 
 int WriteBatchInternal::Count(const WriteBatch* b) {
+  // little endian for all platforms
   return DecodeFixed32(b->rep_.data() + 8);
 }
 

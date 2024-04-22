@@ -378,6 +378,7 @@ class PosixWritableFile final : public WritableFile {
       return status;
     }
 
+    // [maxshuang] in linux, dir is also a file，so it needs to be flushed first
     int fd = ::open(dirname_.c_str(), O_RDONLY | kOpenBaseFlags);
     if (fd < 0) {
       status = PosixError(dirname_, errno);

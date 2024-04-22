@@ -18,6 +18,7 @@
 
 namespace leveldb {
 
+// [maxshuang]:Rep is representation, pimpl idiom 
 struct TableBuilder::Rep {
   Rep(const Options& opt, WritableFile* f)
       : options(opt),
@@ -91,6 +92,7 @@ Status TableBuilder::ChangeOptions(const Options& options) {
   return Status::OK();
 }
 
+// [maxshuang]: sst has multi-layer index, FileMetaData(for sstable) => Index block(for block) => filter block => block restart point => data
 void TableBuilder::Add(const Slice& key, const Slice& value) {
   Rep* r = rep_;
   assert(!r->closed);
@@ -101,6 +103,7 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
 
   if (r->pending_index_entry) {
     assert(r->data_block.empty());
+    // [maxshuang] use more efficient separator
     r->options.comparator->FindShortestSeparator(&r->last_key, key);
     std::string handle_encoding;
     r->pending_handle.EncodeTo(&handle_encoding);
@@ -109,6 +112,7 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
   }
 
   if (r->filter_block != nullptr) {
+    // [maxshuang] why choose to store the key? Why not just calculate directly?
     r->filter_block->AddKey(key);
   }
 
@@ -133,6 +137,7 @@ void TableBuilder::Flush() {
     r->pending_index_entry = true;
     r->status = r->file->Flush();
   }
+  // [maxshuang] every time It flushes a block, it should start a new block of filter?
   if (r->filter_block != nullptr) {
     r->filter_block->StartBlock(r->offset);
   }
@@ -150,6 +155,7 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
   Slice block_contents;
   CompressionType type = r->options.compression;
   // TODO(postrelease): Support more compression options: zlib?
+  // [maxshuang] only compress the raw data
   switch (type) {
     case kNoCompression:
       block_contents = raw;
